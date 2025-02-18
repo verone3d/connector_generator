@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from connector_models import ConnectorGenerator
 import cadquery as cq
 import os
@@ -9,6 +9,7 @@ class ConnectorGeneratorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Connector Generator")
+        self.output_path = Path("output")  # Default output path
         self.setup_ui()
         
     def setup_ui(self):
@@ -115,10 +116,26 @@ class ConnectorGeneratorGUI:
         self.connector_type.trace_add("write", update_angle_visibility)
         update_angle_visibility()  # Initial state
         
-        # Generate Button
-        ttk.Button(main_frame, text="Generate Connector", 
-                  command=self.generate_connector).grid(row=2, column=0, columnspan=2, pady=10)
+        # Output Location Frame
+        output_frame = ttk.LabelFrame(main_frame, text="Output Location", padding="5")
+        output_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+
+        # Output path display
+        self.output_path_var = tk.StringVar(value=str(self.output_path))
+        ttk.Entry(output_frame, textvariable=self.output_path_var, width=50).grid(row=0, column=0, padx=5)
         
+        # Browse button
+        ttk.Button(output_frame, text="Browse...", 
+                  command=self.browse_output_location).grid(row=0, column=1, padx=5)
+
+        # Generate Button (move to after output location)
+        ttk.Button(main_frame, text="Generate Connector", 
+                  command=self.generate_connector).grid(row=3, column=0, columnspan=2, pady=10)
+        
+        # Status Label
+        self.status_var = tk.StringVar()
+        ttk.Label(main_frame, textvariable=self.status_var).grid(row=4, column=0, columnspan=2)
+
         # Configure grid weights
         main_frame.columnconfigure(1, weight=1)
         for child in main_frame.winfo_children():
@@ -149,6 +166,16 @@ class ConnectorGeneratorGUI:
             messagebox.showerror("Invalid Input", str(e))
             return False
             
+    def browse_output_location(self):
+        """Open file dialog to choose output location"""
+        directory = filedialog.askdirectory(
+            initialdir=self.output_path,
+            title="Select Output Directory"
+        )
+        if directory:  # If a directory was selected
+            self.output_path = Path(directory)
+            self.output_path_var.set(str(self.output_path))
+            
     def generate_connector(self):
         """Generate the connector based on current settings"""
         if not self.validate_inputs():
@@ -170,13 +197,13 @@ class ConnectorGeneratorGUI:
             # Generate the appropriate connector
             connector_type = self.connector_type.get()
             if connector_type == "end_to_end":
-                result = generator.create_end_to_end_connector()
+                result = generator.create_single_slot_segment()
             elif connector_type == "angle":
-                result = generator.create_angle_connector(float(self.angle_var.get()))
+                result = generator.create_corner_segment()
             elif connector_type == "t_conn":
-                result = generator.create_t_connector()
+                result = generator.create_t_junction_segment()
             elif connector_type == "cross":
-                result = generator.create_cross_connector()
+                result = generator.create_cross_junction_segment()
                 
             # Get output filename and add connector type
             filename = self.filename_var.get().strip()
@@ -193,17 +220,21 @@ class ConnectorGeneratorGUI:
                 filename += ".step"
             
             # Create output directory if it doesn't exist
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
+            self.output_path.mkdir(exist_ok=True)
             
             # Export to STEP file
-            output_file = output_dir / filename
+            output_file = self.output_path / filename
             cq.exporters.export(result, str(output_file))
             
+            self.status_var.set(f"Saved to: {output_file}")
             messagebox.showinfo("Success", 
                               f"Connector generated successfully!\nSaved as: {output_file}")
             
+            # Open the output folder
+            os.startfile(self.output_path)
+            
         except Exception as e:
+            self.status_var.set(f"Error: {str(e)}")
             messagebox.showerror("Error", f"Failed to generate connector: {str(e)}")
 
 def main():

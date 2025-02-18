@@ -400,3 +400,271 @@ class ConnectorGenerator:
         result = self._add_screw_holes(result, base_size)
 
         return result
+
+    def create_single_slot_segment(self, length=None):
+        """Creates a single straight connector segment with one slot"""
+        if length is None:
+            length = self.board_depth + (self.wall_thickness * 2)
+            
+        # Calculate dimensions
+        connector_width = self.board_width + (self.wall_thickness * 2)
+        connector_height = self.board_thickness + (self.wall_thickness * 2)
+        
+        # Create outer shell
+        result = (cq.Workplane("XY")
+                 .box(length, connector_width, connector_height))
+        
+        # Create slot (slightly larger than board for tolerance)
+        slot = (cq.Workplane("XY")
+               .box(length + self.tolerance,
+                   self.board_width + self.tolerance,
+                   self.board_thickness + self.tolerance))
+        
+        # Cut slot
+        result = result.cut(slot)
+        
+        if self.add_taper:
+            # Add taper at the entrance using a simpler approach
+            taper_depth = min(2, self.wall_thickness)
+            
+            # Create taper for entrance
+            taper = (cq.Workplane("XY")
+                    .box(taper_depth, 
+                        self.board_width + self.tolerance + 2,
+                        self.board_thickness + self.tolerance)
+                    .faces(">X")
+                    .workplane()
+                    .circle(min(self.board_width, self.board_thickness)/2 + self.tolerance)
+                    .extrude(-taper_depth/2))
+            
+            # Add taper at entrance
+            result = result.cut(taper.translate((-length/2 - taper_depth/2, 0, 0)))
+        
+        if self.add_ribs:
+            # Add single reinforcement rib in the middle
+            rib_thickness = min(1.5, self.wall_thickness/2)
+            rib = (cq.Workplane("XY")
+                  .box(rib_thickness, connector_width, connector_height))
+            result = result.union(rib)
+        
+        if self.add_screw_holes:
+            # Add one screw hole in the middle
+            hole_diameter = 5
+            result = (result
+                     .faces(">Z")
+                     .workplane()
+                     .hole(hole_diameter))
+        
+        return result
+
+    def create_corner_segment(self):
+        """Creates a single corner segment for L-shaped connections"""
+        # Calculate dimensions
+        corner_size = self.board_thickness + (self.wall_thickness * 2)
+        connector_width = self.board_width + (self.wall_thickness * 2)
+        
+        # Create solid corner piece
+        result = (cq.Workplane("XY")
+                 .box(corner_size, corner_size, connector_width))
+        
+        # Add slots for both directions
+        slot_width = self.board_width + self.tolerance
+        slot_height = self.board_thickness + self.tolerance
+        
+        # Horizontal slot
+        h_slot = (cq.Workplane("XY")
+                 .box(corner_size * 1.2,  # Make slightly longer to ensure it cuts through
+                     slot_width,
+                     slot_height)
+                 .translate((corner_size/4, 0, 0)))
+        
+        # Vertical slot
+        v_slot = (cq.Workplane("XY")
+                 .box(slot_width,
+                     corner_size * 1.2,  # Make slightly longer to ensure it cuts through
+                     slot_height)
+                 .translate((0, corner_size/4, 0)))
+        
+        # Cut slots
+        result = result.cut(h_slot).cut(v_slot)
+        
+        if self.add_ribs:
+            # Add diagonal reinforcement rib
+            rib_thickness = min(1.5, self.wall_thickness/2)
+            rib = (cq.Workplane("XY")
+                  .box(rib_thickness, corner_size * 1.4, connector_width)
+                  .rotate((0,0,0), (0,0,1), 45)
+                  .translate((0, 0, 0)))
+            result = result.union(rib)
+        
+        return result
+
+    def create_t_junction_segment(self):
+        """Creates a T-junction segment with precise board slots and configurable dimensions"""
+        # Calculate dimensions based on board and wall parameters
+        slot_width = self.board_width + self.tolerance
+        slot_height = self.board_thickness + self.tolerance
+        slot_depth = self.board_depth + self.tolerance
+        
+        # Overall connector dimensions
+        body_width = self.board_width + (self.wall_thickness * 2)  # Width including walls
+        body_height = self.board_thickness + (self.wall_thickness * 2)  # Height including walls
+        body_depth = self.board_depth + (self.wall_thickness * 2)  # Depth including walls
+        
+        # Create main horizontal body
+        result = (cq.Workplane("XY")
+                 .box(body_depth * 2,  # Long enough for two board depths
+                     body_width, 
+                     body_height))
+        
+        # Create vertical extension
+        vertical_body = (cq.Workplane("XY")
+                       .box(body_width,  # Width matches main body height
+                           body_depth,   # Depth for one board
+                           body_height)
+                       .translate((0, body_width/2 + body_depth/2, 0)))  # Position above horizontal body
+        
+        # Combine bodies
+        result = result.union(vertical_body)
+        
+        # Create horizontal slot through entire length
+        h_slot = (cq.Workplane("XY")
+                 .box(body_depth * 3,  # Make it extra long to ensure it cuts through
+                     slot_width,
+                     slot_height))
+        
+        # Create vertical slot
+        v_slot = (cq.Workplane("XY")
+                 .box(slot_width,
+                     slot_depth * 1.5,  # Make it longer to ensure it cuts through
+                     slot_height)
+                 .translate((0, body_width/2 + slot_depth/2, 0)))  # Match vertical body position
+        
+        # Cut slots from body
+        result = result.cut(h_slot).cut(v_slot)
+        
+        if self.add_taper:
+            taper_depth = min(2, self.wall_thickness)
+            
+            # Create horizontal tapers at both ends
+            for x_pos in [-body_depth - taper_depth/2, body_depth + taper_depth/2]:
+                h_taper = (cq.Workplane("XY")
+                          .box(taper_depth, 
+                              slot_width + 2,
+                              slot_height)
+                          .faces(">X" if x_pos < 0 else "<X")
+                          .workplane()
+                          .circle(min(slot_width, slot_height)/2 + 0.5)
+                          .extrude(taper_depth/2 if x_pos < 0 else -taper_depth/2))
+                result = result.cut(h_taper.translate((x_pos, 0, 0)))
+            
+            # Create vertical taper at the top
+            v_taper = (cq.Workplane("XY")
+                      .box(slot_width + 2,
+                          taper_depth,
+                          slot_height)
+                      .faces(">Y")
+                      .workplane()
+                      .circle(min(slot_width, slot_height)/2 + 0.5)
+                      .extrude(-taper_depth/2))
+            result = result.cut(v_taper.translate((0, body_width/2 + body_depth + taper_depth/2, 0)))
+        
+        if self.add_ribs:
+            # Add reinforcement ribs
+            rib_thickness = min(1.5, self.wall_thickness/2)
+            
+            # Add ribs in horizontal section
+            for x_pos in [-body_depth/2, 0, body_depth/2]:
+                h_rib = (cq.Workplane("XY")
+                        .box(rib_thickness, body_width, body_height)
+                        .translate((x_pos, 0, 0)))
+                result = result.union(h_rib)
+            
+            # Add rib in vertical section
+            v_rib = (cq.Workplane("XY")
+                    .box(body_width, rib_thickness, body_height)
+                    .translate((0, body_width/2 + body_depth/2, 0)))
+            result = result.union(v_rib)
+        
+        return result
+
+    def create_cross_junction_segment(self):
+        """Creates a cross junction segment for four-way connections"""
+        # Calculate dimensions
+        slot_width = self.board_width + self.tolerance
+        slot_height = self.board_thickness + self.tolerance
+        
+        # Overall dimensions
+        body_width = self.board_width + (self.wall_thickness * 2)
+        body_height = self.board_thickness + (self.wall_thickness * 2)
+        junction_size = max(body_width, body_height) * 2  # Make junction large enough for both slots
+        
+        # Create main body
+        result = (cq.Workplane("XY")
+                 .box(junction_size, junction_size, body_height))
+        
+        # Create slots
+        h_slot = (cq.Workplane("XY")
+                 .box(junction_size * 1.2, slot_width, slot_height))  # Slightly longer to ensure it cuts through
+        
+        v_slot = (cq.Workplane("XY")
+                 .box(slot_width, junction_size * 1.2, slot_height))  # Slightly longer to ensure it cuts through
+        
+        # Cut slots
+        result = result.cut(h_slot).cut(v_slot)
+        
+        if self.add_taper:
+            taper_depth = min(2, self.wall_thickness)
+            
+            # Add tapers at all four entrances
+            for x_pos in [-junction_size/2 - taper_depth/2, junction_size/2 + taper_depth/2]:
+                h_taper = (cq.Workplane("XY")
+                          .box(taper_depth, slot_width + 2, slot_height)
+                          .faces(">X" if x_pos < 0 else "<X")
+                          .workplane()
+                          .circle(min(slot_width, slot_height)/2 + 0.5)
+                          .extrude(taper_depth/2 if x_pos < 0 else -taper_depth/2))
+                result = result.cut(h_taper.translate((x_pos, 0, 0)))
+            
+            for y_pos in [-junction_size/2 - taper_depth/2, junction_size/2 + taper_depth/2]:
+                v_taper = (cq.Workplane("XY")
+                          .box(slot_width + 2, taper_depth, slot_height)
+                          .faces(">Y" if y_pos < 0 else "<Y")
+                          .workplane()
+                          .circle(min(slot_width, slot_height)/2 + 0.5)
+                          .extrude(taper_depth/2 if y_pos < 0 else -taper_depth/2))
+                result = result.cut(v_taper.translate((0, y_pos, 0)))
+        
+        if self.add_ribs:
+            # Add diagonal reinforcement ribs
+            rib_thickness = min(1.5, self.wall_thickness/2)
+            for angle in [45, 135]:
+                rib = (cq.Workplane("XY")
+                      .box(rib_thickness, junction_size * 0.8, body_height)
+                      .rotate((0,0,0), (0,0,1), angle))
+                result = result.union(rib)
+        
+        return result
+
+    def save_segment(self, segment, filename, file_format='STEP'):
+        """Saves a connector segment to a file
+        
+        Args:
+            segment: The CadQuery workplane object to save
+            filename: The name of the file (without extension)
+            file_format: The format to save as ('STEP', 'STL', or 'DXF')
+        """
+        file_format = file_format.upper()
+        if file_format not in ['STEP', 'STL', 'DXF']:
+            raise ValueError("Unsupported file format. Use 'STEP', 'STL', or 'DXF'")
+            
+        full_filename = f"{filename}.{file_format.lower()}"
+        
+        if file_format == 'STEP':
+            cq.exporters.export(segment, full_filename)
+        elif file_format == 'STL':
+            cq.exporters.export(segment, full_filename, tolerance=0.01)
+        elif file_format == 'DXF':
+            cq.exporters.export(segment, full_filename)
+            
+        return full_filename

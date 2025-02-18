@@ -108,3 +108,4 @@ build/connector_generator/*.pkg
 build/*.pkg
 dist/*.exe
 dist/run_app/_internal/*.pyd
+
